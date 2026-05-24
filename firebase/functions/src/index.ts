@@ -505,10 +505,29 @@ async function scrapeBabyCenter(): Promise<void> {
   console.log(`babycenter.mk done in ${elapsedMs}ms — ok=${ok} skipped=${skipped} failed=${failed}`);
 }
 
+/**
+ * Dispatch: `node lib/index.js <target>` where target is one of
+ * "babycenter" | "libertabebecentar" | "all" (default).
+ * Each store's GitHub Action passes its own target so runs don't cross-contaminate.
+ */
 async function main(): Promise<void> {
-  await scrapeBabyCenter();
-  await scrapeLibertaBebeCentar();
-  // TODO: scrapeBebeSupermarket() can be added here.
+  const target = process.argv[2] ?? "all";
+  switch (target) {
+    case "babycenter":
+      await scrapeBabyCenter();
+      break;
+    case "libertabebecentar":
+      await scrapeLibertaBebeCentar();
+      break;
+    case "all":
+      await scrapeBabyCenter();
+      await scrapeLibertaBebeCentar();
+      break;
+    default:
+      throw new Error(
+        `Unknown scrape target "${target}". Valid: babycenter | libertabebecentar | all`,
+      );
+  }
 }
 
 main()
