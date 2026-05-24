@@ -30,16 +30,22 @@ class BebeSupermarketRepository @Inject constructor(
 
     override suspend fun scrapeProduct(url: String): Product? = withContext(Dispatchers.IO) {
         val doc = Ksoup.parse(httpClient.get(url).bodyAsText())
+        val current = doc.selectFirst("div.product-price strong")?.text()?.let(::parsePrice)
+        val old = doc.selectFirst("div.product-price-old del")?.text()?.let(::parsePrice)
+        val (regular, sale) = pricePair(current = current, old = old)
         Product(
             url = url,
+            source = SOURCE,
             sku = null,
             name = doc.metaContent("og:title") ?: doc.selectFirst("h1")?.text().orEmpty(),
             brand = null,
             description = doc.metaContent("og:description"),
             images = listOfNotNull(doc.metaContent("og:image")),
-            lowPrice = doc.selectFirst("div.product-price strong")?.text()?.let(::parsePrice),
-            highPrice = doc.selectFirst("div.product-price-old del")?.text()?.let(::parsePrice),
+            regularPrice = regular,
+            salePrice = sale,
             priceCurrency = MKD,
+            discountPercent = discountPercentOf(regular, sale),
+            isOnSale = sale != null,
         )
     }
 
@@ -74,21 +80,35 @@ class BebeSupermarketRepository @Inject constructor(
                 ?.let { it.attr("data-src").ifBlank { it.attr("src") } }
             val current = card.selectFirst("span.product-price")?.text()?.let(::parsePrice)
             val old = card.selectFirst("del.old-product-price")?.text()?.let(::parsePrice)
+            val (regular, sale) = pricePair(current = current, old = old)
             val name = card.selectFirst("h2.product-title a")?.text()
                 ?: card.selectFirst(".product-title")?.text().orEmpty()
             Product(
                 url = href,
+                source = SOURCE,
                 sku = null,
                 name = name,
                 brand = null,
                 description = null,
                 images = listOfNotNull(image),
-                lowPrice = current,
-                highPrice = old,
+                regularPrice = regular,
+                salePrice = sale,
                 priceCurrency = MKD,
+                discountPercent = discountPercentOf(regular, sale),
+                isOnSale = sale != null,
             )
         }
     }
+
+    private fun pricePair(current: Double?, old: Double?): Pair<Double?, Double?> = when {
+        old != null && current != null && current < old -> old to current
+        else -> (old ?: current) to null
+    }
+
+    private fun discountPercentOf(regular: Double?, sale: Double?): Double? =
+        if (regular != null && sale != null && regular > 0.0)
+            ((regular - sale) / regular * 100).toInt().toDouble()
+        else null
 
     private fun Document.metaContent(property: String): String? =
         selectFirst("meta[property=$property]")?.attr("content")?.takeIf { it.isNotBlank() }
@@ -102,6 +122,7 @@ class BebeSupermarketRepository @Inject constructor(
 
     companion object {
         private const val BASE = "https://www.bebesupermarket.mk"
+        private const val SOURCE = "bebesupermarket.mk"
         private const val MKD = "MKD"
         private const val MAX_PAGES_PER_CATEGORY = 100
         val DEFAULT_CATEGORIES = listOf(

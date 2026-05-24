@@ -42,7 +42,7 @@ fun BabyCenterScreen(
                         Column {
                             Text(text = p.name)
                             val price =
-                                p.lowPrice?.let { "$it ${p.priceCurrency.orEmpty()}" } ?: "—"
+                                p.effectivePrice?.let { "$it ${p.priceCurrency.orEmpty()}" } ?: "—"
                             Text(text = price)
                         }
                     }

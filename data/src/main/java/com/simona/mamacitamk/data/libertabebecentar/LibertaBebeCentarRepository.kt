@@ -75,19 +75,21 @@ class LibertaBebeCentarRepository @Inject constructor(
 
         return Product(
             url = href,
+            source = SOURCE,
             sku = null,
             name = name,
             brand = null,
             description = description,
             images = listOfNotNull(image),
-            lowPrice = price,
-            highPrice = null,
+            regularPrice = price,
+            salePrice = null,
             priceCurrency = currency,
         )
     }
 
     companion object {
         private const val BASE = "https://www.libertabebecentar.mk"
+        private const val SOURCE = "libertabebecentar.mk"
         private const val MAX_PAGES_PER_CATEGORY = 100
         val DEFAULT_CATEGORIES = listOf(
             "kolichki",

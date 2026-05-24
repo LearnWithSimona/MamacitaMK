@@ -7,11 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,11 +25,9 @@ fun LibertaBebeCentarScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    LaunchedEffect(Unit) { viewModel.load() }
-
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         state.RenderContent(
-            idleContent = { Button(onClick = { viewModel.load() }) { Text("Load") } },
+            idleContent = { CircularProgressIndicator() },
             loadingContent = { CircularProgressIndicator() },
             emptyDataContent = { Text("No products") },
             onErrorContent = { error -> Text("Error: ${error.message ?: "Unknown"}") },
@@ -43,7 +39,7 @@ fun LibertaBebeCentarScreen(
                     items(products) { p ->
                         Column {
                             Text(text = p.name)
-                            val price = p.lowPrice?.let { "$it ${p.priceCurrency.orEmpty()}" } ?: "—"
+                            val price = p.effectivePrice?.let { "$it ${p.priceCurrency.orEmpty()}" } ?: "—"
                             Text(text = price)
                         }
                     }

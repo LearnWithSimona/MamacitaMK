@@ -1,4 +1,4 @@
-package com.simona.mamacitamk.data.babycenter
+package com.simona.mamacitamk.data.libertabebecentar
 
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
@@ -12,13 +12,13 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class FirestoreBabyCenterRepository @Inject constructor(
+class FirestoreLibertaBebeCentarRepository @Inject constructor(
     private val firestore: FirebaseFirestore,
 ) {
 
     fun observe(): Flow<List<Product>> = callbackFlow {
         val registration = firestore.collection(COLLECTION)
-            .whereEqualTo(FIELD_SOURCE, SOURCE_BABYCENTER)
+            .whereEqualTo(FIELD_SOURCE, SOURCE)
             .orderBy(FIELD_SCRAPED_AT, Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -87,6 +87,6 @@ class FirestoreBabyCenterRepository @Inject constructor(
         const val COLLECTION = "products"
         const val FIELD_SOURCE = "source"
         const val FIELD_SCRAPED_AT = "scrapedAt"
-        const val SOURCE_BABYCENTER = "babycenter.mk"
+        const val SOURCE = "libertabebecentar.mk"
     }
 }

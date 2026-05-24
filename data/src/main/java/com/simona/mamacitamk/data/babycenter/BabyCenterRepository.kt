@@ -76,21 +76,31 @@ class BabyCenterRepository @Inject constructor(
         val brand = (json["brand"] as? JsonObject)?.get("name")?.asStringOrNull()
             ?: (json["brand"] as? JsonPrimitive)?.contentOrNull
         val offers = json["offers"] as? JsonObject
-        val lowPrice = offers?.get("lowPrice")?.asStringOrNull()?.toDoubleOrNull()
+        val high = offers?.get("highPrice")?.asStringOrNull()?.toDoubleOrNull()
+        val low = offers?.get("lowPrice")?.asStringOrNull()?.toDoubleOrNull()
             ?: offers?.get("price")?.asStringOrNull()?.toDoubleOrNull()
-        val highPrice = offers?.get("highPrice")?.asStringOrNull()?.toDoubleOrNull()
-        val currency = offers?.get("priceCurrency")?.asStringOrNull()
+        val (regularPrice, salePrice) = when {
+            high != null && low != null && low < high -> high to low
+            else -> (high ?: low) to null
+        }
+        val rawCurrency = offers?.get("priceCurrency")?.asStringOrNull()
+        val currency = if (rawCurrency == "ден") "MKD" else rawCurrency
+        val discountPercent = if (regularPrice != null && salePrice != null) {
+            ((regularPrice - salePrice) / regularPrice * 100).toInt().toDouble()
+        } else null
 
         return Product(
             url = url,
+            source = "babycenter.mk",
             sku = json["sku"]?.asStringOrNull(),
             name = json["name"]?.asStringOrNull().orEmpty(),
             brand = brand,
             description = json["description"]?.asStringOrNull(),
             images = images,
-            lowPrice = lowPrice,
-            highPrice = highPrice,
+            regularPrice = regularPrice,
+            salePrice = salePrice,
             priceCurrency = currency,
+            discountPercent = discountPercent,
         )
     }
 
