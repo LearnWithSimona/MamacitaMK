@@ -1,10 +1,32 @@
-import { onSchedule, ScheduledEvent } from "firebase-functions/v2/scheduler";
-import { logger } from "firebase-functions";
-import { initializeApp } from "firebase-admin/app";
+/**
+ * Standalone scraper script. Runs in GitHub Actions on a cron schedule
+ * (see .github/workflows/scrape.yml) and writes products to Firestore
+ * via the Firebase Admin SDK.
+ *
+ * Auth:
+ *   - In CI: reads FIREBASE_SERVICE_ACCOUNT env var (JSON string from a GH secret).
+ *   - Locally: falls back to Application Default Credentials
+ *     (run `gcloud auth application-default login` first).
+ */
+
+import { initializeApp, cert, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import * as cheerio from "cheerio";
 
-initializeApp();
+// ---------- bootstrap ----------
+
+function bootstrapFirebase(): void {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (raw) {
+    initializeApp({ credential: cert(JSON.parse(raw)) });
+    console.log("Firebase initialised with service account from FIREBASE_SERVICE_ACCOUNT env var");
+  } else {
+    initializeApp({ credential: applicationDefault() });
+    console.log("Firebase initialised with Application Default Credentials");
+  }
+}
+
+bootstrapFirebase();
 const db = getFirestore();
 
 // ---------- types ----------
@@ -25,7 +47,7 @@ interface Product {
 
 // ---------- low-level helpers ----------
 
-const USER_AGENT = "Mozilla/5.0 (compatible; MamacitaMKBot/1.0; +https://github.com/yourname)";
+const USER_AGENT = "Mozilla/5.0 (compatible; MamacitaMKBot/1.0; +https://github.com/LearnWithSimona/MamacitaMK)";
 const LOC_RE = /<loc>([^<]+)<\/loc>/g;
 
 async function fetchText(url: string): Promise<string> {
@@ -105,8 +127,7 @@ function bcParseProductPage(html: string, url: string): Product | null {
       (typeof data.brand === "string" ? data.brand : null);
 
     const offers = data.offers ?? {};
-    const lowPrice =
-      toNumberOrNull(offers.lowPrice) ?? toNumberOrNull(offers.price);
+    const lowPrice = toNumberOrNull(offers.lowPrice) ?? toNumberOrNull(offers.price);
     const highPrice = toNumberOrNull(offers.highPrice);
 
     return {
@@ -139,14 +160,12 @@ async function bcScrapeProduct(url: string): Promise<Product | null> {
 
 // ---------- Firestore writes ----------
 
-/** Stable doc ID: prefer the numeric sku, fall back to a URL-safe slug. */
 function docIdFor(product: Product): string {
   if (product.sku && /^\w+$/.test(product.sku)) return `${product.source}__${product.sku}`;
   return `${product.source}__${Buffer.from(product.url).toString("base64url")}`;
 }
 
 async function upsertProducts(products: Product[]): Promise<void> {
-  // Firestore batched writes cap at 500 ops; chunk accordingly.
   const CHUNK = 400;
   for (let i = 0; i < products.length; i += CHUNK) {
     const batch = db.batch();
@@ -166,72 +185,60 @@ async function recordRun(source: string, stats: Record<string, unknown>): Promis
   });
 }
 
-// ---------- scheduled entry point ----------
+// ---------- main ----------
 
-export const scrapeBabyCenter = onSchedule(
-  {
-    schedule: "every 6 hours",
-    timeZone: "Europe/Skopje",
-    timeoutSeconds: 540,
-    memory: "512MiB",
-    region: "europe-west1",
-    retryCount: 0,
-  },
-  async (_event: ScheduledEvent) => {
-    const startedAt = Date.now();
-    logger.info("babycenter.mk scrape: discovering product URLs");
+async function scrapeBabyCenter(): Promise<void> {
+  const startedAt = Date.now();
+  console.log("babycenter.mk: discovering product URLs");
+  const urls = await bcDiscoverProductUrls();
+  console.log(`babycenter.mk: discovered ${urls.length} URLs`);
 
-    const urls = await bcDiscoverProductUrls();
-    logger.info(`babycenter.mk scrape: discovered ${urls.length} URLs`);
+  const buffer: Product[] = [];
+  let ok = 0;
+  let failed = 0;
+  let skipped = 0;
+  const FLUSH_EVERY = 100;
+  const CONCURRENCY = 8;
 
-    const buffer: Product[] = [];
-    let ok = 0;
-    let failed = 0;
-    let skipped = 0;
-    const FLUSH_EVERY = 100;
-    const CONCURRENCY = 8;
+  const flush = async () => {
+    if (buffer.length === 0) return;
+    await upsertProducts(buffer);
+    console.log(`flushed ${buffer.length} (running: ok=${ok} skipped=${skipped} failed=${failed})`);
+    buffer.length = 0;
+  };
 
-    const flush = async () => {
-      if (buffer.length === 0) return;
-      await upsertProducts(buffer);
-      logger.info(`flushed ${buffer.length} products (running totals: ok=${ok} skipped=${skipped} failed=${failed})`);
-      buffer.length = 0;
-    };
+  const results = await mapWithConcurrency(urls, CONCURRENCY, async (url) => {
+    const product = await bcScrapeProduct(url);
+    if (!product) return null;
+    buffer.push(product);
+    if (buffer.length >= FLUSH_EVERY) await flush();
+    return product;
+  });
 
-    const results = await mapWithConcurrency(urls, CONCURRENCY, async (url) => {
-      const product = await bcScrapeProduct(url);
-      if (!product) return null;
-      buffer.push(product);
-      if (buffer.length >= FLUSH_EVERY) await flush();
-      return product;
-    });
-
-    for (const r of results) {
-      if (r.status === "fulfilled") {
-        if (r.value) ok++;
-        else skipped++;
-      } else {
-        failed++;
-      }
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      if (r.value) ok++;
+      else skipped++;
+    } else {
+      failed++;
     }
+  }
 
-    await flush();
+  await flush();
 
-    const elapsedMs = Date.now() - startedAt;
-    await recordRun(BC_SOURCE, {
-      discovered: urls.length,
-      ok,
-      skipped,
-      failed,
-      elapsedMs,
-    });
+  const elapsedMs = Date.now() - startedAt;
+  await recordRun(BC_SOURCE, { discovered: urls.length, ok, skipped, failed, elapsedMs });
+  console.log(`babycenter.mk done in ${elapsedMs}ms — ok=${ok} skipped=${skipped} failed=${failed}`);
+}
 
-    logger.info(`babycenter.mk scrape done in ${elapsedMs}ms — ok=${ok} skipped=${skipped} failed=${failed}`);
-  },
-);
+async function main(): Promise<void> {
+  await scrapeBabyCenter();
+  // TODO: add scrapeBebeSupermarket() and scrapeLibertaBebeCentar() here.
+}
 
-// ---------- TODO: add scrapeBebeSupermarket and scrapeLibertaBebeCentar ----------
-// Pattern: write a discover + parse pair like the bc* helpers above, then export
-// another `onSchedule(...)` with a different `source` tag. Firestore docs are
-// keyed by `${source}__${sku-or-hash}` so collections stay merged but per-site
-// scrapes don't trample each other.
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("Scrape failed:", err);
+    process.exit(1);
+  });
